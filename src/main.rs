@@ -68,11 +68,16 @@ impl SwayState {
     }
 }
 
+use std::{
+    fs::OpenOptions,
+    io::Write,
+};
+
 fn main() -> Fallible<()> {
     let mut sway_state: SwayState = SwayState::new();
 
     for event in Connection::new()?.subscribe([ EventType::Window, EventType::Shutdown ])? {
-        let Ok(event) = event else { continue; };
+        let event = event.unwrap();
 
         match event {
             Event::Window(window) => {
@@ -87,12 +92,11 @@ fn main() -> Fallible<()> {
                 let Some(ref focused_window) = sway_state.focused_window else { continue };
                 let Some(ref master_window) = sway_state.master_window else { continue };
 
-                let result = if focused_window.pid == master_window.pid {
+                let _ = if focused_window.pid == master_window.pid {
                     connection.run_command("splith")
                 } else {
                     connection.run_command("splitv")
-                };
-                result.unwrap();
+                }.unwrap();
             },
             Event::Shutdown(_) => { panic!("Sway shutdown"); },
             _ => continue,

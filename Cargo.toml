@@ -1,7 +1,15 @@
 [package]
-name = "sway_autotiling"
-version = "0.1.0"
+description = "sway autotiler script"
 edition = "2021"
+license = "Bsd-3-Clause"
+name = "sway_autotiling"
+repository = "https://github.com/asdfish/sway_autotiling"
+version = "2.0.0"
 
 [dependencies]
 swayipc = "3.0.3"
+
+[profile.release]
+codegen-units = 1
+strip = "symbols"
+lto = "fat"
