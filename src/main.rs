@@ -1,133 +1,103 @@
-use swayipc::{
-    Connection,
-    Event,
-    EventType,
-    Fallible,
-    Node,
-    NodeType,
-    WindowChange,
+use {
+    swayipc::{
+        Connection,
+        Event,
+        EventType,
+        Fallible,
+        Node,
+        NodeType,
+        WindowChange,
+    },
 };
 
-use std::option::Option;
-
-macro_rules! unsafe_set {
-    ($var:ident, $val:expr) => {
-        unsafe {
-            $var = $val;
+struct Window {
+    x: i32,
+    pid: i32,
+}
+impl Window {
+    pub fn from_node(node: &Node) -> Window {
+        Window {
+            x: node.rect.x,
+            pid: node.pid.unwrap_or(-1),
         }
     }
 }
-macro_rules! unwrap_or_continue_option {
-    (mut $new:ident, $orig:expr) => {
-        if $orig.is_none() {
-            continue;
-        }
-        let mut $new = $orig.unwrap();
-    };
-    ($new:ident, $orig:expr) => {
-        if $orig.is_none() {
-            continue;
-        }
-        let $new = $orig.unwrap();
-    };
+
+struct SwayState {
+    focused_window: Option<Window>,
+    master_window: Option<Window>,
 }
-macro_rules! unwrap_or_continue_result {
-    (mut $new:ident, $orig:expr) => {
-        if $orig.is_err() {
-            continue;
+impl SwayState {
+    pub const fn new() -> SwayState {
+        SwayState {
+            focused_window: None,
+            master_window: None,
         }
-        let mut $new = $orig.unwrap();
-    };
-    ($new:ident, $orig:expr) => {
-        if $orig.is_err() {
-            continue;
-        }
-        let $new = $orig.unwrap();
-    };
-}
-
-static mut FOCUSED_NODE_PID: Option<i32> = None;
-static mut MASTER_NODE_PID: Option<i32> = None;
-static mut MASTER_NODE_X: Option<i32> = None;
-
-fn set_master_node(node: &Node) -> &Node {
-    unsafe_set!(MASTER_NODE_PID, node.pid);
-    unsafe_set!(MASTER_NODE_X, Some(node.rect.x));
-    return node;
-}
-
-fn node_callback(node: &Node) -> &Node {
-    let visible = node.visible.or(Some(false)).unwrap();
-    let pid: i32 = node.pid.or(Some(-1)).unwrap();
-
-    if ! visible || node.node_type != NodeType::Con || pid == -1 {
-        return node;
     }
 
-    if node.focused {
-        unsafe_set!(FOCUSED_NODE_PID, Some(pid));
-    }
+    pub fn update(&mut self, root_node: Node) {
+        let mut to_walk: Vec<Node> = vec![root_node];
 
-    unsafe {
-        match MASTER_NODE_X {
-            Some(master_node_x) => {
-                if node.rect.x < master_node_x {
-                    return set_master_node(node);
+        while let Some(node) = to_walk.pop() {
+            let visible: bool = node.visible.unwrap_or(false);
+            let pid: i32 = node.pid.unwrap_or(-1);
+
+            if node.node_type == NodeType::Con && visible && pid != -1 {
+                if node.focused {
+                    self.focused_window = Some(Window::from_node(&node));
                 }
-            },
-            None => return set_master_node(node),
+
+                match &self.master_window {
+                    Some(master_window) => {
+                        if node.rect.x < master_window.x {
+                            self.master_window = Some(Window::from_node(&node));
+                        }
+                    },
+                    None => self.master_window = Some(Window::from_node(&node)),
+                }
+            }
+
+            for child_node in node.nodes {
+                to_walk.push(child_node);
+            }
         }
     }
-
-    return node;
-}
-fn node_walk(root: &Node, callback: &dyn Fn(&Node) -> &Node) {
-    let mut to_walk: Vec<&Node> = vec![root];
-
-    while let Some(node) = to_walk.pop() {
-        callback(node);
-
-        for child_node in &node.nodes {
-            to_walk.push(child_node);
-        }
+    pub fn reset(&mut self) {
+        self.focused_window = None;
+        self.master_window = None;
     }
 }
 
 fn main() -> Fallible<()> {
-    for event in Connection::new()?.subscribe([ EventType::Window ])? {
-        unwrap_or_continue_result!(event, event);
+    let mut sway_state: SwayState = SwayState::new();
+
+    for event in Connection::new()?.subscribe([ EventType::Window, EventType::Shutdown ])? {
+        let Ok(event) = event else { continue; };
 
         match event {
             Event::Window(window) => {
-                if window.change != WindowChange::Focus {
-                    continue;
-                }
+                if window.change != WindowChange::Focus { continue }
 
-                let connection = Connection::new();
-                unwrap_or_continue_result!(mut connection, connection);
+                let Ok(mut connection) = Connection::new() else { continue };
+                let Ok(tree) = connection.get_tree() else { continue };
 
-                let tree = connection.get_tree();
-                unwrap_or_continue_result!(tree, tree);
+                sway_state.reset();
+                sway_state.update(tree);
 
-                unsafe_set!(FOCUSED_NODE_PID, None);
-                unsafe_set!(MASTER_NODE_PID, None);
-                unsafe_set!(MASTER_NODE_X, None);
-                node_walk(&tree, &node_callback);
+                let Some(ref focused_window) = sway_state.focused_window else { continue };
+                let Some(ref master_window) = sway_state.master_window else { continue };
 
-                unsafe {
-                    unwrap_or_continue_option!(master_node_pid, MASTER_NODE_PID);
-                    unwrap_or_continue_option!(focused_node_pid, FOCUSED_NODE_PID);
-
-                    if master_node_pid == focused_node_pid {
-                        let _ = connection.run_command("splith");
-                    } else {
-                        let _ = connection.run_command("splitv");
-                    }
-                }
+                let result = if focused_window.pid == master_window.pid {
+                    connection.run_command("splith")
+                } else {
+                    connection.run_command("splitv")
+                };
+                result.unwrap();
             },
+            Event::Shutdown(_) => { panic!("Sway shutdown"); },
             _ => continue,
-        }
+        };
     }
 
-    return Ok(());
+    Ok(())
 }
