@@ -1,14 +1,4 @@
-use {
-    swayipc::{
-        Connection,
-        Event,
-        EventType,
-        Fallible,
-        Node,
-        NodeType,
-        WindowChange,
-    },
-};
+use swayipc::{Connection, Event, EventType, Fallible, Node, NodeType, WindowChange};
 
 struct Window {
     x: i32,
@@ -52,7 +42,7 @@ impl SwayState {
                         if node.rect.x < master_window.x {
                             self.master_window = Some(Window::from_node(&node));
                         }
-                    },
+                    }
                     None => self.master_window = Some(Window::from_node(&node)),
                 }
             }
@@ -68,37 +58,43 @@ impl SwayState {
     }
 }
 
-use std::{
-    fs::OpenOptions,
-    io::Write,
-};
-
 fn main() -> Fallible<()> {
     let mut sway_state: SwayState = SwayState::new();
 
-    for event in Connection::new()?.subscribe([ EventType::Window, EventType::Shutdown ])? {
-        let event = event.unwrap();
-
-        match event {
+    for event in Connection::new()?.subscribe([EventType::Window, EventType::Shutdown])? {
+        match event.unwrap() {
             Event::Window(window) => {
-                if window.change != WindowChange::Focus { continue }
+                if window.change != WindowChange::Focus {
+                    continue;
+                }
 
-                let Ok(mut connection) = Connection::new() else { continue };
-                let Ok(tree) = connection.get_tree() else { continue };
+                let Ok(mut connection) = Connection::new() else {
+                    continue;
+                };
+                let Ok(tree) = connection.get_tree() else {
+                    continue;
+                };
 
                 sway_state.reset();
                 sway_state.update(tree);
 
-                let Some(ref focused_window) = sway_state.focused_window else { continue };
-                let Some(ref master_window) = sway_state.master_window else { continue };
+                let Some(ref focused_window) = sway_state.focused_window else {
+                    continue;
+                };
+                let Some(ref master_window) = sway_state.master_window else {
+                    continue;
+                };
 
                 let _ = if focused_window.pid == master_window.pid {
                     connection.run_command("splith")
                 } else {
                     connection.run_command("splitv")
-                }.unwrap();
-            },
-            Event::Shutdown(_) => { panic!("Sway shutdown"); },
+                }
+                .unwrap();
+            }
+            Event::Shutdown(_) => {
+                panic!("Sway shutdown");
+            }
             _ => continue,
         };
     }
